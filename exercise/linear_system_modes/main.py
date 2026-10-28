@@ -37,17 +37,24 @@ def simulate_euler(A: Array, x0: Array, dt: float, t_end: float) -> tuple[Array,
     times = make_time_grid(dt, t_end)
     states = np.zeros((len(times), len(x0)), dtype=float)
     states[0] = x0.copy()
-    # TODO 1：遍历时间步，将旧状态计算出的下一状态写入 states[k + 1]。
-    # 两个分量必须使用同一个 states[k]，不要原地修改旧状态。
-    # 完成后删除异常，并返回 times, states。
-    raise NotImplementedError("TODO 1：完成 simulate_euler 的同步更新")
+    # 这里应该是 [0, t_end]
+    for idx in range(1, len(times)):
+        last_state = states[idx - 1]
+        dot_last_state = A @ last_state
+        states[idx] = last_state + dot_last_state * dt
+
+    return times, states
 
 
+# 按列排列特征向量的矩阵 T，以及与列顺序对应的特征值 eigenvalues。
 def build_modal_basis() -> tuple[Array, Array]:
     """返回 T: (2, 2)，eigenvalues: (2,)，列顺序与特征值顺序对应。"""
-    # TODO 2：先在 REPORT.md 手工推导，再填写特征向量矩阵与特征值。
-    # 用 np.column_stack((v1, v2)) 按列构造 T；此处不调用 np.linalg.eig。
-    raise NotImplementedError("TODO 2：填写手工推导的特征值和特征向量")
+    v1 = np.array([1.0, 1.0])
+    v2 = np.array([1.0, -1.0])
+    T = np.column_stack((v1, v2))
+    eigenvalues = np.array([-1.0, -3.0])
+
+    return T, eigenvalues
 
 
 def check_modal_basis(A: Array, T: Array, eigenvalues: Array) -> None:
@@ -63,20 +70,39 @@ def check_modal_basis(A: Array, T: Array, eigenvalues: Array) -> None:
         raise ValueError("AT=TD 检查失败，请检查特征值与特征向量的对应关系")
 
 
+# 模态坐标轨迹 modes    和    重建后的原状态轨迹 states
+#  特征向量空间下的坐标           原始坐标系下的坐标
 def solve_modal(
     T: Array, eigenvalues: Array, x0: Array, times: Array
 ) -> tuple[Array, Array]:
     """返回 modes 和 states，形状均为 (len(times), 2)。"""
-    # TODO 3：依次实现初值分解、各模态独立演化、状态重建。
-    # 可用 np.linalg.solve 求初值；本函数不调用矩阵指数。
-    # 注意：数学公式使用列向量，本脚本用数组的每一行保存一个时刻。
-    raise NotImplementedError("TODO 3：完成 solve_modal")
+    # T_inv = np.linalg.inv(T)
+
+    # z0 = T_inv @ x0
+    z0 = np.linalg.solve(T, x0)
+    modes = np.zeros((len(times), 2))
+    states = np.zeros((len(times), 2))
+
+    for idx, time in enumerate(times):
+        modes[idx] = np.array(
+            [
+                np.exp(eigenvalues[0] * time) * z0[0],
+                np.exp(eigenvalues[1] * time) * z0[1],
+            ]
+        )
+        states[idx] = T @ modes[idx]
+
+    return modes, states
 
 
+# 比较两种方法得到的状态轨迹，返回它们在所有采样时刻中最大的偏差。
 def max_state_error(actual: Array, reference: Array) -> float:
     """同一时间网格上，先对状态差求二范数，再对时间取最大值。"""
     if actual.shape != reference.shape or actual.ndim != 2:
         raise ValueError("两组轨迹必须具有相同的二维形状")
+    difference = actual - reference
+    norms = np.linalg.norm(difference, ord=2, axis=1)
+    return np.max(norms)
     # TODO 4：计算 README 中定义的误差，不要只比较终点。
     raise NotImplementedError("TODO 4：完成 max_state_error")
 
@@ -171,14 +197,48 @@ def run_comparison(*, include_expm: bool = False) -> None:
             plot_trajectories(times, trajectories, f"compare_{name}_dt_{dt:g}")
 
 
+# 特征向量的长度改变后，模态坐标会改变，但重建出的原状态轨迹不变
 def run_scaling() -> None:
     T, eigenvalues = build_modal_basis()
     check_modal_basis(A, T, eigenvalues)
+
+    scaled_T = T.copy()
+    scaled_T[:, 0] *= 3.0
+    check_modal_basis(A, scaled_T, eigenvalues)
+
+    times = make_time_grid(DEFAULT_DT, T_END)
+
+    for name, x0 in INITIAL_STATES.items():
+        # 两次求解都会根据传入的基，重新计算模态初值。
+        modes, states = solve_modal(T, eigenvalues, x0, times)
+        scaled_modes, scaled_states = solve_modal(scaled_T, eigenvalues, x0, times)
+
+        print(f"\n初始状态：{name}, x0 = {x0}")
+        print(f"原模态初值：{modes[0]}")
+        print(f"新模态初值：{scaled_modes[0]}")
+
+        error = max_state_error(scaled_states, states)
+        print(f"重建状态的最大误差：{error:.6e}")
+
+        # 比较模态坐标：第一模态应缩小为原来的三分之一。
+        plot_trajectories(
+            times,
+            {"Original basis": modes, "Scaled basis": scaled_modes},
+            f"scaling_modes_{name}",
+            coordinates=("z1", "z2"),
+        )
+
+        # 比较原状态：两条轨迹应重合。
+        plot_trajectories(
+            times,
+            {"Original basis": states, "Scaled basis": scaled_states},
+            f"scaling_states_{name}",
+        )
     # TODO 5：先记录预测，再复制 T，将第一列放大三倍。
     # 对三个初值分别用新旧基调用 solve_modal，重新分解初值。
     # 打印新旧模态初值，绘制模态与重建状态的对比图，并计算状态误差。
     # 不要原地修改原来的 T，也不要沿用旧的模态初值。
-    raise NotImplementedError("TODO 5：完成特征向量长度实验")
+    # raise NotImplementedError("TODO 5：完成特征向量长度实验")
 
 
 def run_nilpotent() -> None:
