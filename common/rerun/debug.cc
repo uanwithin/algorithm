@@ -1,6 +1,8 @@
 #include "debug.hh"
 #include "geometry.hh"
 
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -264,6 +266,58 @@ Debug::arrow(std::string_view entity,
                      .with_show_labels(show_label))
         .throw_on_failure();
   }
+}
+
+
+void
+Debug::grid_map(std::string_view entity,
+                std::span<std::uint8_t const> cells,
+                std::size_t width,
+                std::size_t height,
+                float cell_size,
+                Eigen::Vector3d const& origin,
+                float opacity)
+{
+  auto const* rec = active_recording();
+  if(rec == nullptr)
+  {
+    return;
+  }
+  if(width == 0 || height == 0 ||
+     width > std::numeric_limits<std::uint32_t>::max() ||
+     height > std::numeric_limits<std::uint32_t>::max() ||
+     width > std::numeric_limits<std::size_t>::max() / height ||
+     cells.size() != width * height)
+  {
+    throw std::invalid_argument("Debug::grid_map: invalid dimensions or pixel count");
+  }
+  if(!std::isfinite(cell_size) || cell_size <= 0.0F ||
+     !origin.cast<float>().allFinite() || !std::isfinite(opacity) ||
+     opacity < 0.0F || opacity > 1.0F)
+  {
+    throw std::invalid_argument("Debug::grid_map: invalid cell size, origin or opacity");
+  }
+  std::vector<std::uint8_t> image;
+  image.reserve(cells.size());
+  // Our grid starts at the lower-left cell (y increases upwards). Rerun's
+  // image buffer starts at the top row, even though GridMap's translation
+  // specifies the lower-left corner. Reverse rows, not columns or world poses.
+  for(std::size_t row = height; row > 0; --row)
+  {
+    auto const values = cells.subspan((row - 1) * width, width);
+    image.insert(image.end(), values.begin(), values.end());
+  }
+  auto map = rerun::archetypes::GridMap::clear_fields()
+             .with_data(rerun::components::ImageBuffer(std::move(image)))
+             .with_format(rerun::components::ImageFormat(
+                 {static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)},
+                 rerun::ColorModel::L,
+                 rerun::ChannelDatatype::U8))
+             .with_cell_size(cell_size)
+             .with_translation({float(origin.x()), float(origin.y()), float(origin.z())})
+             .with_opacity(opacity)
+             .with_colormap(rerun::Colormap::RvizCostmap);
+  rec->try_log(entity, map).throw_on_failure();
 }
 
 

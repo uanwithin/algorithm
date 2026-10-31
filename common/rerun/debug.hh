@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -153,6 +154,18 @@ public:
         float z = 0.04F,
         std::string_view label = {},
         bool show_label = false);
+  // Row-major single-channel U8 cost values, starting at the lower-left corner.
+  // Internally reversed to Rerun's top-row-first image buffer convention.
+  // Uses RvizCostmap: 0 is transparent; 100 represents an occupied cell.
+  // origin is that corner in scene units; opacity scales the colormap's alpha.
+  static void
+  grid_map(std::string_view entity,
+           std::span<std::uint8_t const> cells,
+           std::size_t width,
+           std::size_t height,
+           float cell_size,
+           Eigen::Vector3d const& origin,
+           float opacity = 1.0F);
   static void
   boxes(std::string_view entity,
         std::span<Eigen::Vector3d const> centers,
